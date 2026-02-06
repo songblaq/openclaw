@@ -249,10 +249,12 @@ export async function runWithModelFallback<T>(params: {
 
       if (profileIds.length > 0 && !isAnyProfileAvailable) {
         // All profiles for this provider are in cooldown; skip without attempting
+        const cooldownMsg = `Provider ${candidate.provider} is in cooldown (all profiles unavailable)`;
+        console.warn(`[model-fallback] Skipping ${candidate.provider}/${candidate.model}: ${cooldownMsg}`);
         attempts.push({
           provider: candidate.provider,
           model: candidate.model,
-          error: `Provider ${candidate.provider} is in cooldown (all profiles unavailable)`,
+          error: cooldownMsg,
           reason: "rate_limit",
         });
         continue;
@@ -260,6 +262,12 @@ export async function runWithModelFallback<T>(params: {
     }
     try {
       const result = await params.run(candidate.provider, candidate.model);
+      // Log success after fallback attempts
+      if (attempts.length > 0) {
+        console.warn(
+          `[model-fallback] Success with ${candidate.provider}/${candidate.model} after ${attempts.length} failed attempt(s)`,
+        );
+      }
       return {
         result,
         provider: candidate.provider,
@@ -289,6 +297,19 @@ export async function runWithModelFallback<T>(params: {
         status: described.status,
         code: described.code,
       });
+
+      // Log fallback attempt for debugging
+      const nextCandidate = candidates[i + 1];
+      if (nextCandidate) {
+        console.warn(
+          `[model-fallback] ${candidate.provider}/${candidate.model} failed (${described.reason ?? "error"}): ${described.message}. Trying next: ${nextCandidate.provider}/${nextCandidate.model}`,
+        );
+      } else {
+        console.warn(
+          `[model-fallback] ${candidate.provider}/${candidate.model} failed (${described.reason ?? "error"}): ${described.message}. No more fallbacks.`,
+        );
+      }
+
       await params.onError?.({
         provider: candidate.provider,
         model: candidate.model,
@@ -353,6 +374,12 @@ export async function runWithImageModelFallback<T>(params: {
     const candidate = candidates[i];
     try {
       const result = await params.run(candidate.provider, candidate.model);
+      // Log success after fallback attempts
+      if (attempts.length > 0) {
+        console.warn(
+          `[image-model-fallback] Success with ${candidate.provider}/${candidate.model} after ${attempts.length} failed attempt(s)`,
+        );
+      }
       return {
         result,
         provider: candidate.provider,
@@ -364,11 +391,25 @@ export async function runWithImageModelFallback<T>(params: {
         throw err;
       }
       lastError = err;
+      const errorMsg = err instanceof Error ? err.message : String(err);
       attempts.push({
         provider: candidate.provider,
         model: candidate.model,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMsg,
       });
+
+      // Log fallback attempt for debugging
+      const nextCandidate = candidates[i + 1];
+      if (nextCandidate) {
+        console.warn(
+          `[image-model-fallback] ${candidate.provider}/${candidate.model} failed: ${errorMsg}. Trying next: ${nextCandidate.provider}/${nextCandidate.model}`,
+        );
+      } else {
+        console.warn(
+          `[image-model-fallback] ${candidate.provider}/${candidate.model} failed: ${errorMsg}. No more fallbacks.`,
+        );
+      }
+
       await params.onError?.({
         provider: candidate.provider,
         model: candidate.model,
