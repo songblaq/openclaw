@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAbortError, isTransientNetworkError } from "./unhandled-rejections.js";
+import { isAbortError, isRateLimitError, isTransientNetworkError } from "./unhandled-rejections.js";
 
 describe("isAbortError", () => {
   it("returns true for error with name AbortError", () => {
@@ -124,5 +124,76 @@ describe("isTransientNetworkError", () => {
   it("returns false for AggregateError with only non-network errors", () => {
     const error = new AggregateError([new Error("regular error")], "Multiple errors");
     expect(isTransientNetworkError(error)).toBe(false);
+  });
+});
+
+describe("isRateLimitError", () => {
+  it("returns true for error with status 429", () => {
+    const error = Object.assign(new Error("Too Many Requests"), { status: 429 });
+    expect(isRateLimitError(error)).toBe(true);
+  });
+
+  it("returns true for error with statusCode 429", () => {
+    const error = Object.assign(new Error("Too Many Requests"), { statusCode: 429 });
+    expect(isRateLimitError(error)).toBe(true);
+  });
+
+  it("returns true for error with status string '429'", () => {
+    const error = Object.assign(new Error("Too Many Requests"), { status: "429" });
+    expect(isRateLimitError(error)).toBe(true);
+  });
+
+  it("returns true for error message containing rate_limit", () => {
+    expect(isRateLimitError(new Error("rate_limit_error: Your account has hit a rate limit"))).toBe(true);
+    expect(isRateLimitError(new Error("rate limit exceeded"))).toBe(true);
+    expect(isRateLimitError(new Error("Rate Limit Exceeded"))).toBe(true);
+  });
+
+  it("returns true for error message containing too many requests", () => {
+    expect(isRateLimitError(new Error("Too Many Requests"))).toBe(true);
+    expect(isRateLimitError(new Error("too many requests - please slow down"))).toBe(true);
+  });
+
+  it("returns true for error message containing quota exceeded", () => {
+    expect(isRateLimitError(new Error("You have exceeded your current quota"))).toBe(true);
+    expect(isRateLimitError(new Error("Quota exceeded for this resource"))).toBe(true);
+  });
+
+  it("returns true for error message containing resource_exhausted", () => {
+    expect(isRateLimitError(new Error("resource_exhausted: API rate limit"))).toBe(true);
+    expect(isRateLimitError(new Error("RESOURCE_EXHAUSTED"))).toBe(true);
+  });
+
+  it("returns true for error message containing overloaded", () => {
+    expect(isRateLimitError(new Error("overloaded_error: Server is overloaded"))).toBe(true);
+    expect(isRateLimitError(new Error("The server is overloaded"))).toBe(true);
+  });
+
+  it("returns true for nested cause with rate limit error", () => {
+    const cause = Object.assign(new Error("rate limit hit"), { status: 429 });
+    const error = Object.assign(new Error("Request failed"), { cause });
+    expect(isRateLimitError(error)).toBe(true);
+  });
+
+  it("returns false for regular errors without rate limit indicators", () => {
+    expect(isRateLimitError(new Error("Something went wrong"))).toBe(false);
+    expect(isRateLimitError(new Error("Internal server error"))).toBe(false);
+    expect(isRateLimitError(new Error("Bad request"))).toBe(false);
+  });
+
+  it("returns false for network errors", () => {
+    const error = Object.assign(new Error("Connection reset"), { code: "ECONNRESET" });
+    expect(isRateLimitError(error)).toBe(false);
+  });
+
+  it("returns false for null and undefined", () => {
+    expect(isRateLimitError(null)).toBe(false);
+    expect(isRateLimitError(undefined)).toBe(false);
+  });
+
+  it("returns false for other status codes", () => {
+    expect(isRateLimitError(Object.assign(new Error("Not Found"), { status: 404 }))).toBe(false);
+    expect(isRateLimitError(Object.assign(new Error("Server Error"), { status: 500 }))).toBe(false);
+    expect(isRateLimitError(Object.assign(new Error("Unauthorized"), { status: 401 }))).toBe(false);
   });
 });

@@ -35,6 +35,16 @@ const TRANSIENT_NETWORK_CODES = new Set([
   "UND_ERR_BODY_TIMEOUT",
 ]);
 
+// Rate limit error patterns that indicate transient failures (shouldn't crash the gateway)
+const RATE_LIMIT_PATTERNS = [
+  /rate[_ ]?limit/i,
+  /too many requests/i,
+  /429/,
+  /quota/i, // matches "quota exceeded", "exceeded your current quota", etc.
+  /resource[_ ]?exhausted/i,
+  /overloaded/i,
+];
+
 function getErrorCause(err: unknown): unknown {
   if (!err || typeof err !== "object") {
     return undefined;
@@ -84,6 +94,39 @@ function isConfigError(err: unknown): boolean {
  * Checks if an error is a transient network error that shouldn't crash the gateway.
  * These are typically temporary connectivity issues that will resolve on their own.
  */
+/**
+ * Checks if an error is a rate limit error that shouldn't crash the gateway.
+ * These are temporary API limits that should be handled gracefully.
+ */
+export function isRateLimitError(err: unknown): boolean {
+  if (!err) {
+    return false;
+  }
+
+  // Check status code
+  if (typeof err === "object" && err !== null) {
+    const status = (err as { status?: unknown; statusCode?: unknown }).status ??
+                   (err as { statusCode?: unknown }).statusCode;
+    if (status === 429 || status === "429") {
+      return true;
+    }
+  }
+
+  // Check error message against rate limit patterns
+  const message = err instanceof Error ? err.message : String(err);
+  if (RATE_LIMIT_PATTERNS.some((pattern) => pattern.test(message))) {
+    return true;
+  }
+
+  // Check the cause chain recursively
+  const cause = getErrorCause(err);
+  if (cause && cause !== err) {
+    return isRateLimitError(cause);
+  }
+
+  return false;
+}
+
 export function isTransientNetworkError(err: unknown): boolean {
   if (!err) {
     return false;
@@ -168,6 +211,16 @@ export function installUnhandledRejectionHandler(): void {
     if (isTransientNetworkError(reason)) {
       console.warn(
         "[openclaw] Non-fatal unhandled rejection (continuing):",
+        formatUncaughtError(reason),
+      );
+      return;
+    }
+
+    // Rate limit errors are transient - log and continue instead of crashing
+    // The fallback system should handle these, but if they escape, don't crash
+    if (isRateLimitError(reason)) {
+      console.warn(
+        "[openclaw] Rate limit error (continuing, fallback should handle):",
         formatUncaughtError(reason),
       );
       return;
